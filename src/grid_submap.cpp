@@ -1,5 +1,6 @@
 #include <chrono>
 #include <sstream>
+#include <fstream>
 #include <algorithm>
 #include <ros/ros.h>
 #include <ros/package.h>
@@ -96,7 +97,6 @@ void gridMapCallback (const grid_map_msgs::GridMap& msg){
             more = -1;
             return;
         }
-
         Length l(lx, ly);
 
         bool success;
@@ -110,133 +110,57 @@ void gridMapCallback (const grid_map_msgs::GridMap& msg){
             transform(input.begin(), input.end(), input.begin(), ::tolower);
         }
         if(input == "yes" or input == "y"){
-            // TODO Write to file!
-            cout << "Placeholder for saved file message" << endl;
+            cout << "Nice, now tell me which layers to save (comma separated):" << endl;
+            cin>>input;
+
+            stringstream ss(input);
+            vector<string> v;
+            string tmp_s;
+            while(getline(ss, tmp_s, ',')){
+                v.push_back(tmp_s);
+            }
+
+            long int now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            stringstream().swap(ss);
+            ss << now;
+            tmp_s = ss.str();
+            string extension = "_submap.txt";
+
+            ofstream ofs;
+            unsigned szx = tmp_.getSize()[0];
+            unsigned szy = tmp_.getSize()[1];
+            for(const string& layer_name: v) {
+                ofs.open(path + layer_name + "_" + tmp_s + extension, ios_base::app);
+                ofs << szx << endl;
+                ofs << szy << endl;
+                unsigned cnt = 0;
+                try{
+                    for (grid_map::GridMapIterator iterator(tmp_); !iterator.isPastEnd(); ++iterator) {
+                        if(cnt < szx){
+                            if(cnt > 0){
+                                ofs << "#";
+                            }
+                            cnt++;
+                        }
+                        else{
+                            cnt = 1;
+                            ofs << endl;
+                        }
+                        ofs << tmp_.at(layer_name, *iterator);
+                    }
+                }
+                catch(...){
+                    cout << "\033[1;31mCould not fine layer name: " << layer_name <<"!\033[0m" << endl;
+                }
+                ofs.close();
+                std::cout << "\033[1;32mWrote\033[0m \033[1;31m" + path + layer_name + "_" + tmp_s + extension + "\033[0m \033[1;32mto disk!\033[0m" << std::endl;
+            }
+
+
             break;
         }
     }
     more = 1;
-    //map_.getSubmap()
-    /*
-    pcl::PCLPointCloud2 pcl_cloud;
-    pcl_conversions::toPCL(msg, pcl_cloud);
-
-    pcl::PointCloud<pcl::PointXYZRGB> cloud;
-    pcl::fromPCLPointCloud2(pcl_cloud, cloud);
-    pcl::PointCloud<pcl::PointXYZRGB> cloud2 = pcl::PointCloud<pcl::PointXYZRGB>(cloud);
-
-    for(unsigned i=0; i<cloud.width; i+=sy){
-        for(unsigned j=0; j<cloud.height; j+=sx){
-            unsigned no_nan = 0;
-            double maxw = 0;
-            double maxl = 0;
-            unsigned maxi = 0;
-            unsigned maxj = 0;
-            for(unsigned l=j;l<cloud.height;l++){
-                for(unsigned k=i;k<cloud.width;k++){
-                    if(!(isnan(cloud.at(k,l).x) or 
-                        isnan(cloud.at(k,l).y) or 
-                        isnan(cloud.at(k,l).z) or 
-                        isinf(cloud.at(k,l).x) or 
-                        isinf(cloud.at(k,l).y) or 
-                        isinf(cloud.at(k,l).z) or 
-                        isnan(cloud.at(i,j).x) or 
-                        isnan(cloud.at(i,j).y) or 
-                        isnan(cloud.at(i,j).z) or 
-                        isinf(cloud.at(i,j).x) or 
-                        isinf(cloud.at(i,j).y) or 
-                        isinf(cloud.at(i,j).z))){
-                        no_nan++;
-                        double ll = cloud.at(i,j).x - cloud.at(k,l).x;
-                        double w = cloud.at(i,j).y - cloud.at(k,l).y;
-                        // I can't get abs to work?! wtf!
-                        if(ll < 0){
-                            ll = -ll;
-                        }
-                        if(w < 0){
-                            w = -w;
-                        }
-                        if(k > maxi){
-                            maxi = k;
-                        }
-                        if(l > maxj){
-                            maxj = l;
-                        }
-                        if(ll <= length and w <= width){
-                            cloud.at(k,l).r = red_value;
-                            cloud.at(k,l).g = green_value;
-                            cloud.at(k,l).b = blue_value;
-                            if(ll > maxl){
-                                maxl = ll;
-                            }
-                            if(w > maxw){
-                                maxw = w;
-                            }
-                        }
-                        if(abs(cloud.at(i,j).x - cloud.at(k,l).x) > length and abs(cloud.at(i,j).y - cloud.at(k,l).y) > width){
-                            k = cloud.width;
-                            l = cloud.height;
-                        }
-                    }
-                }
-            }
-            if(maxl >= length-tolerance and maxw >= width-tolerance){
-                sensor_msgs::PointCloud2 output;
-                pcl::toPCLPointCloud2(cloud, pcl_cloud);
-                pcl_conversions::fromPCL(pcl_cloud, output);
-                pub.publish (output);
-                cloud = pcl::PointCloud<pcl::PointXYZRGB>(cloud2);
-                cout << "\033[1;33m====================================\033[0m" << endl;
-                cout << "\033[1;33m=======\033[0m \033[1;31mPointCloud Annotator\033[0m \033[1;33m=======\033[0m" << endl;
-                cout << "\033[1;33m===============\033[0m \033[1;31mHelp\033[0m \033[1;33m===============\033[0m" << endl;
-                cout << "\033[1;33m====================================\033[0m" << endl;
-                cout << "\033[1;34m-q\033[0m \033[1;34m--quit\033[0m: quit program" << endl;
-                cout << "\033[1;34m-s\033[0m \033[1;34m--skip\033[0m: skip current points" << endl;
-                cout << "\033[1;34mAnything else\033[0m: annotation name" << endl;
-                cout << "- Annotate the \033[1;33mhighlighted\033[0m points: -\n";
-                string input;
-                cin>>input;
-                transform(input.begin(), input.end(), input.begin(), ::tolower);
-                if(input == "--quit" or input == "-q"){
-                    i = cloud.width;
-                    j = cloud.height;
-                    more = -1;
-                }
-                else if(input != "--skip" and input != "-s"){
-                    pcl::PointCloud<pcl::PointXYZRGB> tmpcloud;
-                    for(unsigned jj=j; jj<maxj; jj++){
-                        for(unsigned ii=i; ii<maxi; ii++){
-                            tmpcloud.push_back(cloud.at(ii,jj));
-                        }
-                    }
-                    tmpcloud.width = maxi - i;
-                    tmpcloud.height = maxj - j;
-                    long int now = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
-                    string s;
-                    stringstream ss;
-                    ss << now;
-                    s = ss.str();
-                    pcl::io::savePCDFileASCII (path+"/data/"+input+"_"+s+".pcd", tmpcloud);
-                    cout << "\033[1;32mWrote\033[0m \033[1;31m" + path+"/data/"+input+"_"+s+".pcd" + "\033[0m \033[1;32mto disk!\033[0m" << endl;
-                }
-            }
-        }
-    }
-    if(more == 0){
-        string input = "answer";
-        while(input != "yes" and input != "y" and input!="no" and input!= "n"){
-            cout << "This pointcloud has been annotated. Do you want to continue to the next one? ((y)es/(n)o)" << endl;
-            cin>>input;
-            transform(input.begin(), input.end(), input.begin(), ::tolower);
-        }
-        if(input == "yes" or input == "y"){
-            more = 1;
-        }
-        else{
-            more = -1;
-        }
-    }
-    */
 }
 
 
@@ -245,9 +169,9 @@ int main (int argc, char** argv){
     ros::NodeHandle nh;
 
     string in_topic;
-    nh.param("grid_submap/input_topic", in_topic, string("/elevation_mapping/elevation_map"));
+    nh.param("grid_submap/input_topic", in_topic, string("/traversability_estimation/traversability_map"));
 
-    path = ros::package::getPath("grid_submap");
+    path = ros::package::getPath("grid_submap") + "/data/";
 
     ros::Subscriber sub = nh.subscribe (in_topic, 1, gridMapCallback);
 
