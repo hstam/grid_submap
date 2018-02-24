@@ -44,15 +44,15 @@ def gridMapLayersToImage(gm, layers):
         g = gridMapLayerToImage(gm, layers[1])
         b = gridMapLayerToImage(gm, layers[2])
         img = np.zeros((len(r[0]), len(r), 3), 'uint8')
-        for i in range(len(img[0])):
-            for j in range(len(img)):
-                img[i,j,0] = gridCellToPixel(r[i,j])
-                img[i,j,1] = gridCellToPixel(g[i,j])
-                img[i,j,2] = gridCellToPixel(b[i,j])
+        for i in range(len(img)):
+            for j in range(len(img[0])):
+                img[i,j,0] = gridCellToPixel(r[j,i])
+                img[i,j,1] = gridCellToPixel(g[j,i])
+                img[i,j,2] = gridCellToPixel(b[j,i])
         return img
 
-# ORB, SIFT, FLANN and SURF
-# based on https://github.com/yorgosk/grid_map_to_image/blob/master/scripts/matching_test.py
+# ORB, SIFT, FLANN and SURF based on
+# https://github.com/yorgosk/grid_map_to_image/blob/master/scripts/matching_test.py
 def ORB(img1, img2):
     orb = cv2.ORB_create()
     # find the keypoints and descriptors with ORB
@@ -68,14 +68,9 @@ def ORB(img1, img2):
     bf.train()
 
     # Match descriptors.
-    matches = bf.match(des1, des2)
-    matches = sorted(matches, key = lambda x:x.distance)
+    matches = bf.match(des2)
 
-    # Sort them in the order of their distance.
-    matches = sorted(matches, key = lambda x:x.distance)
-
-    img3 = cv2.drawMatches(img1, kp1, img2, kp2, matches, None, flags=2)
-    plt.imshow(img3), plt.show()
+    return kp1, kp2, matches
 
 def SIFT(img1, img2):
     # Initiate SIFT detector
@@ -87,26 +82,19 @@ def SIFT(img1, img2):
 
     # BFMatcher with default params
     bf = cv2.BFMatcher()
-    matches = bf.knnMatch(des1, des2, k=2)
 
-    # Apply ratio test
-    good = []
-    for m_n in matches:
-        if len(m_n) == 2:
-            (m, n) = m_n
-            if m.distance < 0.75 * n.distance:
-                good.append([m])
+    matches = []
+    if (len(kp1) > 0) and (len(kp2) > 0):
+        matches = bf.knnMatch(des1, des2, k=2)
 
-    # cv2.drawMatchesKnn expects list of lists as matches.
-    img3 = cv2.drawMatchesKnn(img1, kp1, img2, kp2, good, None, flags=2)
-    plt.imshow(img3), plt.show()
+    return kp1, kp2, matches
 
 def FLANN(img1, img2):
     sift = cv2.xfeatures2d.SIFT_create()
 
     # find the keypoints and descriptors with SIFT
-    kp1, des1 = sift.detectAndCompute(img1,None)
-    kp2, des2 = sift.detectAndCompute(img2,None)
+    kp1, des1 = sift.detectAndCompute(img1, None)
+    kp2, des2 = sift.detectAndCompute(img2, None)
     # FLANN parameters
     FLANN_INDEX_KDTREE = 0
     index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
@@ -114,35 +102,20 @@ def FLANN(img1, img2):
 
     flann = cv2.FlannBasedMatcher(index_params, search_params)
 
+    matches = []
+
     if (len(kp1) >= 2) and (len(kp2) >= 2):
         matches = flann.knnMatch(des1, des2, k=2)
 
-        # Need to draw only good matches, so create a mask
-        matchesMask = [[0,0] for i in xrange(len(matches))]
-
-        # ratio test as per Lowe's paper
-        for i, (m, n) in enumerate(matches):
-            if m.distance < 0.7 * n.distance:
-                matchesMask[i]=[1, 0]
-
-        draw_params = dict(matchColor = (0, 255, 0),
-                           singlePointColor = (255, 0, 0),
-                           matchesMask = matchesMask,
-                           flags = 0)
-
-    img3 = cv2.drawMatchesKnn(img1,kp1,img2,kp2,matches,None,**draw_params)
-    plt.imshow(img3,), plt.show()
+    return kp1, kp2, matches
 
 def SURF(img1, img2):
     # Initiate SURF detector
     surf = cv2.xfeatures2d.SURF_create(400)
 
     # find the keypoints and descriptors with SURF
-    kp1, des1 = surf.detectAndCompute(img1,None)
-    kp2, des2 = surf.detectAndCompute(img2,None)
-
-    # # BFMatcher with default params
-    # bf = cv2.BFMatcher()
+    kp1, des1 = surf.detectAndCompute(img1, None)
+    kp2, des2 = surf.detectAndCompute(img2, None)
 
     # Create BFMatcher and add cluster of training images. One for now.
     bf = cv2.BFMatcher(cv2.NORM_L1,crossCheck=False) # crossCheck not supported by BFMatcher
@@ -153,19 +126,46 @@ def SURF(img1, img2):
     bf.train()
 
     # Match descriptors.
-    # matches = bf.knnMatch(des1,des2, k=2)
     matches = bf.match(des2)
-    matches = sorted(matches, key = lambda x:x.distance)
 
-    # Apply ratio test
+    return kp1, kp2, matches
+
+def transformationsHomography(img1, img2, kp1, kp2, matches):
+    MIN_MATCH_COUNT = 5
+
+    # store all the good matches as per Lowe's ratio test.
     good = []
     for m in matches:
-        if m.distance < 0.75:
-            good.append([m])
+        if m.distance < 0.7:
+            good.append(m)
 
-    # cv2.drawMatchesKnn expects list of lists as matches.
-    img3 = cv2.drawMatchesKnn(img1, kp1, img2, kp2, good, None, flags=2)
-    plt.imshow(img3),plt.show()
+    print len(good)
+    if len(good)>MIN_MATCH_COUNT:
+        src_pts = np.float32([ kp1[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
+        dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+
+        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        matchesMask = mask.ravel().tolist()
+
+        h,w = img1.shape
+        pts = np.float32([ [0,0], [0,h-1], [w-1,h-1], [w-1,0] ]).reshape(-1,1,2)
+        if M != None:
+            dst = cv2.perspectiveTransform(pts,M)
+
+            img2 = cv2.polylines(img2,[np.int32(dst)],True,255,3, cv2.LINE_AA)
+
+            draw_params = dict(matchColor = (0,255,0), # draw matches in green color
+                               singlePointColor = None,
+                               matchesMask = matchesMask, # draw only inliers
+                               flags = 2)
+
+            img3 = cv2.drawMatches(img1,kp1,img2,kp2,good,None,**draw_params)
+            plt.imshow(img3, 'gray'),plt.show()
+        else:
+            print "Not enough points found for holography"
+
+    else:
+        print "Not enough matches are found - %d/%d" % (len(good),MIN_MATCH_COUNT)
 
 def gridMapCallback(msg):
     global ready, combined_layers, patterns, layers
@@ -173,36 +173,40 @@ def gridMapCallback(msg):
         ready = False
         if len(combined_layers) == 3:
             comb_img = gridMapLayersToImage(msg, combined_layers)
-            s =  np.shape(comb_img)
-            comb_img.data = np.reshape(comb_img.data, s)
             for p in patterns:
                 if p.combined:
+                    matches = []
+                    kp1 = []
+                    kp2 = []
                     if method == 0:
-                        ORB(np.array(comb_img.data), p.data.astype(np.uint8))
+                        kp1, kp2, matches = ORB(comb_img, p.data)
                     elif method == 1:
-                        SIFT(np.array(comb_img.data), p.data.astype(np.uint8))
+                        kp1, kp2, matches = SIFT(comb_img, p.data.astype(np.uint8))
                     elif method == 2:
-                        FLANN(np.array(comb_img.data), p.data.astype(np.uint8))
+                        kp1, kp2, matches = FLANN(comb_img, p.data)
                     elif method == 3:
-                        SURF(np.array(comb_img.data), p.data.astype(np.uint8))
-                    # Above calls are all broken! Damn noooice!
-                    # TODO transformations based on returned values (TODO)
+                        kp1, kp2, matches = SURF(comb_img, p.data)
+                    transformationsHomography(comb_img, p.data, kp1, kp2, matches)
+                    # TODO transformations based on returned values
         layer_imgs = []
         for l in layers:
             layer_imgs.append(Pattern("", l, data = gridMapLayerToImage(msg, l)))
-        return 0
         for img in layer_imgs:
             for p in patterns:
                 if img.layer == p.layer:
+                    matches = []
+                    kp1 = []
+                    kp2 = []
                     if method == 0:
-                        ORB(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                        kp1, kp2, matches = ORB(img.data.astype(np.uint8), p.data.astype(np.uint8))
                     elif method == 1:
-                        SIFT(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                        kp1, kp2, matches = SIFT(img.data.astype(np.uint8), p.data.astype(np.uint8))
                     elif method == 2:
-                        FLANN(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                        kp1, kp2, matches = FLANN(img.data.astype(np.uint8), p.data.astype(np.uint8))
                     elif method == 3:
-                        SURF(img.data.astype(np.uint8), p.data.astype(np.uint8))
-                    # TODO transformations based on returned values (TODO)
+                        kp1, kp2, matches = SURF(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                    transformationsHomography(img.data.astype(np.uint8), p.data, kp1, kp2, matches)
+                    # TODO transformations based on returned values
         ready = True
 
 def initPatterns(path, layers, specific_files, combined_layers):
@@ -251,11 +255,11 @@ def initPatterns(path, layers, specific_files, combined_layers):
                             if p__.layer == combined_layers[2] and p__.id == p.id:
                                 stop = True
                                 d = np.zeros((len(p__.data[0]), len(p__.data), 3), 'uint8')
-                                for i in range(len(d[0])):
-                                    for j in range(len(p__.data)):
-                                        d[i,j,0] = gridCellToPixel(p.data[i,j])
-                                        d[i,j,1] = gridCellToPixel(p_.data[i,j])
-                                        d[i,j,2] = gridCellToPixel(p__.data[i,j])
+                                for i in range(len(d)):
+                                    for j in range(len(d[0])):
+                                        d[i,j,0] = gridCellToPixel(p.data[j,i])
+                                        d[i,j,1] = gridCellToPixel(p_.data[j,i])
+                                        d[i,j,2] = gridCellToPixel(p__.data[j,i])
                                 patterns_oi.append(Pattern(p.filename+"+"+p_.filename+"+"+p__.filename, p.layer+"+"+p_.layer+"+"+p__.layer, specific = p.specific, combined = True, data = d))
                                 break
     return patterns_oi
@@ -280,7 +284,9 @@ def init():
     elif feature_matching_method == "SURF":
         method = 3
 
-    combined_layers = ["traversability_slope", "traversability_step", "traversability_roughness"]
+    # Method 1 and 2 are not providing the correct format for matches(?)
+    method = 3
+    #combined_layers = ["traversability_slope", "traversability_step", "traversability_roughness"]
 
     patterns = initPatterns(path, layers, specific_files, combined_layers)
     rospy.Subscriber(gridmap_topic, GridMap, gridMapCallback)
