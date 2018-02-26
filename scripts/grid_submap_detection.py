@@ -111,7 +111,7 @@ def FLANN(img1, img2):
 
 def SURF(img1, img2):
     # Initiate SURF detector
-    surf = cv2.xfeatures2d.SURF_create(400)
+    surf = cv2.xfeatures2d.SURF_create(500, 10, 50, True, True)
 
     # find the keypoints and descriptors with SURF
     kp1, des1 = surf.detectAndCompute(img1, None)
@@ -167,8 +167,49 @@ def transformationsHomography(img1, img2, kp1, kp2, matches):
     else:
         print "Not enough matches are found - %d/%d" % (len(good),MIN_MATCH_COUNT)
 
+def templateMatching(img, template):
+    #template = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
+    img2 = img.copy()
+    ts = template.shape[::-1]
+    w = ts[0]
+    h = ts[1]
+
+    # All the 6 methods for comparison in a list
+    methods = ['cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR',
+    'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
+
+    for meth in methods:
+        img = img2.copy()
+        method = eval(meth)
+
+        # Apply template Matching
+        res = cv2.matchTemplate(img, template, method)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+
+        # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
+        if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+            top_left = min_loc
+        else:
+            top_left = max_loc
+        bottom_right = (top_left[0] + w, top_left[1] + h)
+
+        # cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
+
+        # plt.subplot(121),plt.imshow(res,cmap = 'gray')
+        # plt.title('Matching Result'), plt.xticks([]), plt.yticks([])
+        # plt.subplot(122),plt.imshow(img,cmap = 'gray')
+        # plt.title('Detected Point'), plt.xticks([]), plt.yticks([])
+        # plt.suptitle(meth)
+
+        # plt.show()
+
+        return top_left, bottom_right
+
+def midPoint(p1, p2):
+    return ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+
 def gridMapCallback(msg):
-    global ready, combined_layers, patterns, layers
+    global ready, combined_layers, patterns, layers, combined_only
     if ready:
         ready = False
         if len(combined_layers) == 3:
@@ -186,27 +227,39 @@ def gridMapCallback(msg):
                         kp1, kp2, matches = FLANN(comb_img, p.data)
                     elif method == 3:
                         kp1, kp2, matches = SURF(comb_img, p.data)
-                    transformationsHomography(comb_img, p.data, kp1, kp2, matches)
+                    elif method == 4:
+                        top_left, bottom_right = templateMatching(comb_img.astype(np.uint8), p.data.astype(np.uint8))
+                        center_point = midPoint(top_left, bottom_right)
+                        # TODO get the transformation from the gridmap and publish a tf
+                    if method != 4:
+                        transformationsHomography(comb_img, p.data, kp1, kp2, matches)
                     # TODO transformations based on returned values
-        layer_imgs = []
-        for l in layers:
-            layer_imgs.append(Pattern("", l, data = gridMapLayerToImage(msg, l)))
-        for img in layer_imgs:
-            for p in patterns:
-                if img.layer == p.layer:
-                    matches = []
-                    kp1 = []
-                    kp2 = []
-                    if method == 0:
-                        kp1, kp2, matches = ORB(img.data.astype(np.uint8), p.data.astype(np.uint8))
-                    elif method == 1:
-                        kp1, kp2, matches = SIFT(img.data.astype(np.uint8), p.data.astype(np.uint8))
-                    elif method == 2:
-                        kp1, kp2, matches = FLANN(img.data.astype(np.uint8), p.data.astype(np.uint8))
-                    elif method == 3:
-                        kp1, kp2, matches = SURF(img.data.astype(np.uint8), p.data.astype(np.uint8))
-                    transformationsHomography(img.data.astype(np.uint8), p.data, kp1, kp2, matches)
-                    # TODO transformations based on returned values
+        if not combined_only:
+            layer_imgs = []
+            for l in layers:
+                layer_imgs.append(Pattern("", l, data = gridMapLayerToImage(msg, l)))
+            for img in layer_imgs:
+                for p in patterns:
+                    if img.layer == p.layer:
+                        matches = []
+                        kp1 = []
+                        kp2 = []
+                        if method == 0:
+                            kp1, kp2, matches = ORB(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                        elif method == 1:
+                            kp1, kp2, matches = SIFT(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                        elif method == 2:
+                            kp1, kp2, matches = FLANN(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                        elif method == 3:
+                            kp1, kp2, matches = SURF(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                        elif method == 4:
+                            top_left, bottom_right = templateMatching(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                            center_point = midPoint(top_left, bottom_right)
+                            # TODO get the transformation from the gridmap and publish a tf
+
+                        if method != 4:
+                            transformationsHomography(img.data.astype(np.uint8), p.data, kp1, kp2, matches)
+                        # TODO transformations based on returned values
         ready = True
 
 def initPatterns(path, layers, specific_files, combined_layers):
@@ -265,7 +318,7 @@ def initPatterns(path, layers, specific_files, combined_layers):
     return patterns_oi
 
 def init():
-    global ready, patterns, layers, combined_layers, method
+    global ready, patterns, layers, combined_layers, method, combined_only
     rospy.init_node("grid_submap_detection")
 
     rospack = rospkg.RosPack()
@@ -275,18 +328,24 @@ def init():
     gridmap_topic = rospy.get_param("~gridmap_topic", "/traversability_estimation/traversability_map")
     specific_files = rospy.get_param("~specific_files", [])
     combined_layers = rospy.get_param("~combined_layers", [])
-    feature_matching_method = rospy.get_param("~feature_matching_method", "ORB") # Alternatives "SIFT", "FLANN", "SURF"
+    feature_matching_method = rospy.get_param("~feature_matching_method", "TM") # Alternatives "ORB", SIFT", "FLANN", "SURF", "TM"
+    combined_only = rospy.get_param("~combined_only", False)
     to_file = rospy.get_param("~to_file", False)
-    if feature_matching_method == "SIFT":
+    if feature_matching_method == "ORB":
+        method = 0
+    elif feature_matching_method == "SIFT":
         method = 1
     elif feature_matching_method == "FLANN":
         method = 2
     elif feature_matching_method == "SURF":
         method = 3
+    elif feature_matching_method == "TM": # Template Matching
+        method = 4
 
     # Method 1 and 2 are not providing the correct format for matches(?)
-    method = 3
+    layers = ["elevation"]
     #combined_layers = ["traversability_slope", "traversability_step", "traversability_roughness"]
+    #combined_only = True
 
     patterns = initPatterns(path, layers, specific_files, combined_layers)
     rospy.Subscriber(gridmap_topic, GridMap, gridMapCallback)
