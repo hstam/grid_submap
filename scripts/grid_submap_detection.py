@@ -10,6 +10,7 @@ from os.path import isfile, join
 from matplotlib import pyplot as plt
 from grid_map_msgs.msg import GridMap
 
+magic_thresholds = []
 combined_layers = []
 stats_file = False
 patterns = []
@@ -170,8 +171,8 @@ def transformationsHomography(img1, img2, kp1, kp2, matches):
     else:
         print "Not enough matches are found - %d/%d" % (len(good),MIN_MATCH_COUNT)
 
-def templateMatching(img, template):
-    global stats_file, path
+def templateMatching(img, template, layer_name):
+    global stats_file, path, magic_thresholds
     img2 = img.copy()
     ts = template.shape[::-1]
     w = ts[0]
@@ -192,18 +193,42 @@ def templateMatching(img, template):
         # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
         if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
             top_left = min_loc
+            print "Method = " + meth
+            print "Value = (<)" + str(min_val)
         else:
             top_left = max_loc
+            print "Method = " + meth
+            print "Value = (>) " + str(max_val)
         bottom_right = (top_left[0] + w, top_left[1] + h)
 
         if stats_file:
-            print "Check the images, decide if the selected area corresponds to the trained image, close the window and press 'y' or 'n'"
+            print "Check the images, decide if the selected area corresponds to the trained image, close the window and answer with 'y' or 'n'"
 
-            cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
+            nothing = True
 
-            if len(np.shape(img)) < 3:
+            if ((meth == methods[4] and min_val < magic_thresholds[4]) 
+                or (meth == methods[5] and min_val < magic_thresholds[5])
+                or (meth == methods[3] and max_val > magic_thresholds[3])
+                or (meth == methods[2] and max_val > magic_thresholds[2])
+                or (meth == methods[1] and max_val > magic_thresholds[1])
+                or (meth == methods[0] and max_val > magic_thresholds[0])):
+
+                nothing = False
+
+
+                if len(np.shape(img)) < 3:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                    cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
+                    res = np.transpose(res)
+                    img = np.transpose(img, (1, 0, 2))
+                else:
+                    cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
+
+            if nothing and len(np.shape(img)) < 3:
                 res = np.transpose(res)
                 img = np.transpose(img)
+
+
             plt.subplot(121)
             plt.imshow(res, cmap = 'gray')
             plt.title('Matching Result')
@@ -218,12 +243,12 @@ def templateMatching(img, template):
 
             plt.show()
 
-            an = str(raw_input("Was the highlighted part of the image correct? (y/n)\n"))
+            an = str(raw_input("Was the highlighted (if present) part of the image correct? (y/n)\n"))
             timestr = time.strftime("%Y%m%d-%H%M%S")
-            cv2.imwrite(path+meth+"_"+an+"_"+timestr+".png", img)
+            cv2.imwrite(path+"log_" + layer_name + "_" + meth + "_" + an + "_" + timestr + ".png", img)
 
     if stats_file:
-        print "Done with all methods! The next questions "
+        print "\033[1;33mDone with all methods! Letting the next grid map through for inspection...\033[0m"
 
     return top_left, bottom_right
 
@@ -250,7 +275,7 @@ def gridMapCallback(msg):
                     elif method == 3:
                         kp1, kp2, matches = SURF(comb_img, p.data)
                     elif method == 4:
-                        top_left, bottom_right = templateMatching(comb_img.astype(np.uint8), p.data.astype(np.uint8))
+                        top_left, bottom_right = templateMatching(comb_img.astype(np.uint8), p.data.astype(np.uint8), "combined")
                         center_point = midPoint(top_left, bottom_right)
                         # TODO get the transformation from the gridmap and publish a tf
                     if method != 4:
@@ -275,7 +300,7 @@ def gridMapCallback(msg):
                         elif method == 3:
                             kp1, kp2, matches = SURF(img.data.astype(np.uint8), p.data.astype(np.uint8))
                         elif method == 4:
-                            top_left, bottom_right = templateMatching(img.data.astype(np.uint8), p.data.astype(np.uint8))
+                            top_left, bottom_right = templateMatching(img.data.astype(np.uint8), p.data.astype(np.uint8), p.layer)
                             center_point = midPoint(top_left, bottom_right)
                             # TODO get the transformation from the gridmap and publish a tf
 
@@ -293,12 +318,12 @@ def initPatterns(path, layers, specific_files, combined_layers):
         curr_l = ""
         curr_s = ""
         for l in layers:
-            if l in f:
+            if l in f and "txt" in f[-3:]:
                 layers_ok = True
                 curr_l = l
                 break
         for sf in specific_files:
-            if sf in f:
+            if sf in f and "txt" in f[-3:]:
                 specific_ok = True
                 curr_s = sf
                 break
@@ -340,7 +365,7 @@ def initPatterns(path, layers, specific_files, combined_layers):
     return patterns_oi
 
 def init():
-    global ready, patterns, layers, combined_layers, method, combined_only, stats_file, path
+    global ready, patterns, layers, combined_layers, method, combined_only, stats_file, path, magic_thresholds
     rospy.init_node("grid_submap_detection")
 
     rospack = rospkg.RosPack()
@@ -353,6 +378,10 @@ def init():
     feature_matching_method = rospy.get_param("~feature_matching_method", "TM") # Alternatives "ORB", SIFT", "FLANN", "SURF", "TM"
     combined_only = rospy.get_param("~combined_only", True)
     stats_file = rospy.get_param("~write_stats_file", False)
+
+    #'cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR', 'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
+    magic_thresholds = rospy.get_param("~magic_thresholds", [250000, 0.7, 700000, 0.7, 30000, 0.3])
+
     if feature_matching_method == "ORB":
         method = 0
     elif feature_matching_method == "SIFT":
@@ -365,8 +394,6 @@ def init():
         method = 4
 
     # Methods 1 and 2 are not providing the correct format for matches(?)
-    #layers = ["elevation"]
-    stats_file = True
 
     patterns = initPatterns(path, layers, specific_files, combined_layers)
     rospy.Subscriber(gridmap_topic, GridMap, gridMapCallback)
