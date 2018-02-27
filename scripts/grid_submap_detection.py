@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import tf
 import cv2
+import time
 import rospy
 import rospkg
 import numpy as np
@@ -10,10 +11,12 @@ from matplotlib import pyplot as plt
 from grid_map_msgs.msg import GridMap
 
 combined_layers = []
+stats_file = False
 patterns = []
 ready = False
 layers = []
 method = 0
+path = ""
 
 class Pattern:
     def __init__(self, filename, layer, specific="", combined=False, data=[]):
@@ -168,7 +171,7 @@ def transformationsHomography(img1, img2, kp1, kp2, matches):
         print "Not enough matches are found - %d/%d" % (len(good),MIN_MATCH_COUNT)
 
 def templateMatching(img, template):
-    #template = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
+    global stats_file, path
     img2 = img.copy()
     ts = template.shape[::-1]
     w = ts[0]
@@ -193,17 +196,36 @@ def templateMatching(img, template):
             top_left = max_loc
         bottom_right = (top_left[0] + w, top_left[1] + h)
 
-        # cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
+        if stats_file:
+            print "Check the images, decide if the selected area corresponds to the trained image, close the window and press 'y' or 'n'"
 
-        # plt.subplot(121),plt.imshow(res,cmap = 'gray')
-        # plt.title('Matching Result'), plt.xticks([]), plt.yticks([])
-        # plt.subplot(122),plt.imshow(img,cmap = 'gray')
-        # plt.title('Detected Point'), plt.xticks([]), plt.yticks([])
-        # plt.suptitle(meth)
+            cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
 
-        # plt.show()
+            if len(np.shape(img)) < 3:
+                res = np.transpose(res)
+                img = np.transpose(img)
+            plt.subplot(121)
+            plt.imshow(res, cmap = 'gray')
+            plt.title('Matching Result')
+            plt.xticks([])
+            plt.yticks([])
+            plt.subplot(122)
+            plt.imshow(img, cmap = 'gray')
+            plt.title('Detected Point')
+            plt.xticks([])
+            plt.yticks([])
+            plt.suptitle(meth)
 
-        return top_left, bottom_right
+            plt.show()
+
+            an = str(raw_input("Was the highlighted part of the image correct? (y/n)\n"))
+            timestr = time.strftime("%Y%m%d-%H%M%S")
+            cv2.imwrite(path+meth+"_"+an+"_"+timestr+".png", img)
+
+    if stats_file:
+        print "Done with all methods! The next questions "
+
+    return top_left, bottom_right
 
 def midPoint(p1, p2):
     return ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
@@ -318,7 +340,7 @@ def initPatterns(path, layers, specific_files, combined_layers):
     return patterns_oi
 
 def init():
-    global ready, patterns, layers, combined_layers, method, combined_only
+    global ready, patterns, layers, combined_layers, method, combined_only, stats_file, path
     rospy.init_node("grid_submap_detection")
 
     rospack = rospkg.RosPack()
@@ -327,10 +349,10 @@ def init():
     layers = rospy.get_param("~layers", ["traversability_step", "traversability_slope", "traversability_roughness", "traversability", "elevation"])
     gridmap_topic = rospy.get_param("~gridmap_topic", "/traversability_estimation/traversability_map")
     specific_files = rospy.get_param("~specific_files", [])
-    combined_layers = rospy.get_param("~combined_layers", [])
+    combined_layers = rospy.get_param("~combined_layers", ["traversability_slope", "traversability_step", "traversability_roughness"])
     feature_matching_method = rospy.get_param("~feature_matching_method", "TM") # Alternatives "ORB", SIFT", "FLANN", "SURF", "TM"
-    combined_only = rospy.get_param("~combined_only", False)
-    to_file = rospy.get_param("~to_file", False)
+    combined_only = rospy.get_param("~combined_only", True)
+    stats_file = rospy.get_param("~write_stats_file", False)
     if feature_matching_method == "ORB":
         method = 0
     elif feature_matching_method == "SIFT":
@@ -342,10 +364,9 @@ def init():
     elif feature_matching_method == "TM": # Template Matching
         method = 4
 
-    # Method 1 and 2 are not providing the correct format for matches(?)
-    layers = ["elevation"]
-    #combined_layers = ["traversability_slope", "traversability_step", "traversability_roughness"]
-    #combined_only = True
+    # Methods 1 and 2 are not providing the correct format for matches(?)
+    #layers = ["elevation"]
+    stats_file = True
 
     patterns = initPatterns(path, layers, specific_files, combined_layers)
     rospy.Subscriber(gridmap_topic, GridMap, gridMapCallback)
