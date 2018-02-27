@@ -215,7 +215,6 @@ def templateMatching(img, template, layer_name):
 
                 nothing = False
 
-
                 if len(np.shape(img)) < 3:
                     img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
                     cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)

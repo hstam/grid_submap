@@ -1,0 +1,10 @@
+layers: ["traversability_step", "traversability_slope", "traversability_roughness", "traversability", "elevation"]
+gridmap_topic: "/traversability_estimation/traversability_map"
+specific_files: []
+combined_layers: ["traversability_slope", "traversability_step", "traversability_roughness"]
+feature_matching_method: "TM" # Alternatives "ORB: SIFT: "FLANN: "SURF: "TM"
+combined_only: True
+write_stats_file: False
+
+#'cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR', 'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
+magic_thresholds: [250000, 0.7, 700000, 0.7, 30000, 0.3]

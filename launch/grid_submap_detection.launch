@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<launch>
+    <node pkg="grid_submap" type="grid_submap_detection.py" respawn="false" name="grid_submap_detection" output="screen">
+        <rosparam file="$(find grid_submap)/config/parameters.yaml" command="load" />
+    </node>
+</launch>
