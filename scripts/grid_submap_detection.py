@@ -13,6 +13,7 @@ from grid_map_msgs.msg import GridMap
 magic_thresholds = []
 combined_layers = []
 stats_file = False
+multiple = False
 patterns = []
 ready = False
 layers = []
@@ -172,7 +173,7 @@ def transformationsHomography(img1, img2, kp1, kp2, matches):
         print "Not enough matches are found - %d/%d" % (len(good),MIN_MATCH_COUNT)
 
 def templateMatching(img, template, layer_name):
-    global stats_file, path, magic_thresholds
+    global stats_file, path, magic_thresholds, multiple
     img2 = img.copy()
     ts = template.shape[::-1]
     w = ts[0]
@@ -185,19 +186,20 @@ def templateMatching(img, template, layer_name):
     for meth in methods:
         img = img2.copy()
         method = eval(meth)
+        threshold = magic_thresholds[methods.index(meth)]
 
         # Apply template Matching
         res = cv2.matchTemplate(img, template, method)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
 
         # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
+        print "Method = " + meth
+        print "Threshold = " + str(threshold)
         if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
             top_left = min_loc
-            print "Method = " + meth
             print "Value = (<)" + str(min_val)
         else:
             top_left = max_loc
-            print "Method = " + meth
             print "Value = (>) " + str(max_val)
         bottom_right = (top_left[0] + w, top_left[1] + h)
 
@@ -208,20 +210,32 @@ def templateMatching(img, template, layer_name):
 
             if ((meth == methods[4] and min_val < magic_thresholds[4]) 
                 or (meth == methods[5] and min_val < magic_thresholds[5])
-                or (meth == methods[3] and max_val > magic_thresholds[3])
-                or (meth == methods[2] and max_val > magic_thresholds[2])
+                or (meth == methods[0] and max_val > magic_thresholds[0])
                 or (meth == methods[1] and max_val > magic_thresholds[1])
-                or (meth == methods[0] and max_val > magic_thresholds[0])):
+                or (meth == methods[2] and max_val > magic_thresholds[2])
+                or (meth == methods[3] and max_val > magic_thresholds[3])):
 
                 nothing = False
 
-                if len(np.shape(img)) < 3:
-                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-                    cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
-                    res = np.transpose(res)
-                    img = np.transpose(img, (1, 0, 2))
+                if multiple:
+                    loc = np.where( res >= threshold)
+                    if len(np.shape(img)) < 3:
+                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                        for pt in zip(*loc[::-1]):
+                            cv2.rectangle(img, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
+                        res = np.transpose(res)
+                        img = np.transpose(img, (1, 0, 2))
+                    else:
+                        for pt in zip(*loc[::-1]):
+                            cv2.rectangle(img, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
                 else:
-                    cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
+                    if len(np.shape(img)) < 3:
+                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                        cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
+                        res = np.transpose(res)
+                        img = np.transpose(img, (1, 0, 2))
+                    else:
+                        cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
 
             if nothing and len(np.shape(img)) < 3:
                 res = np.transpose(res)
@@ -364,7 +378,7 @@ def initPatterns(path, layers, specific_files, combined_layers):
     return patterns_oi
 
 def init():
-    global ready, patterns, layers, combined_layers, method, combined_only, stats_file, path, magic_thresholds
+    global ready, patterns, layers, combined_layers, method, combined_only, stats_file, path, magic_thresholds, multiple
     rospy.init_node("grid_submap_detection")
 
     rospack = rospkg.RosPack()
@@ -377,6 +391,10 @@ def init():
     feature_matching_method = rospy.get_param("~feature_matching_method", "TM") # Alternatives "ORB", SIFT", "FLANN", "SURF", "TM"
     combined_only = rospy.get_param("~combined_only", True)
     stats_file = rospy.get_param("~write_stats_file", False)
+    multiple = rospy.get_param("~multiple", False)
+
+    multiple = True
+    stats_file = True
 
     #'cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR', 'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
     magic_thresholds = rospy.get_param("~magic_thresholds", [250000, 0.7, 700000, 0.7, 30000, 0.3])
