@@ -183,6 +183,8 @@ def templateMatching(img, template, layer_name):
     methods = ['cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR',
     'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
 
+    white1 = np.full((np.shape(img)[0], np.shape(img)[1], 3), 255)
+    white2 = np.full((np.shape(img)[0], np.shape(img)[1], 3), 255)
     for meth in methods:
         img = img2.copy()
         method = eval(meth)
@@ -203,7 +205,7 @@ def templateMatching(img, template, layer_name):
             print "Value = (>) " + str(max_val)
         bottom_right = (top_left[0] + w, top_left[1] + h)
 
-        if stats_file:
+        if stats_file and (meth == "cv2.TM_CCOEFF" or meth == 'cv2.TM_CCORR_NORMED'):
             print "Check the images, decide if the selected area corresponds to the trained image, close the window and answer with 'y' or 'n'"
 
             nothing = True
@@ -222,12 +224,20 @@ def templateMatching(img, template, layer_name):
                     if len(np.shape(img)) < 3:
                         img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
                         for pt in zip(*loc[::-1]):
-                            cv2.rectangle(img, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
+                            if meth == 'cv2.TM_CCORR_NORMED':
+                                cv2.rectangle(white2, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
+                            else:
+                                cv2.rectangle(white1, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
                         res = np.transpose(res)
                         img = np.transpose(img, (1, 0, 2))
                     else:
                         for pt in zip(*loc[::-1]):
-                            cv2.rectangle(img, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
+                            if meth == 'cv2.TM_CCORR_NORMED':
+                                print 'white2'
+                                cv2.rectangle(white2, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
+                            else:
+                                print 'white1'
+                                cv2.rectangle(white1, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
                 else:
                     if len(np.shape(img)) < 3:
                         img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
@@ -241,24 +251,39 @@ def templateMatching(img, template, layer_name):
                 res = np.transpose(res)
                 img = np.transpose(img)
 
+    white = np.full((np.shape(img)[1], np.shape(img)[0], 3), 255)
+    #white = cv2.cvtColor(white.astype(np.uint8), cv2.COLOR_GRAY2RGB)
+    white = cv2.bitwise_or(white1, white2)
+    print white
+    print type(white)
+    print type(img2)
+    print np.shape(white)
+    print np.shape(img2)
+    print img2
+    img = cv2.bitwise_and(img2, white.astype(np.uint8))
+    plt.subplot(121)
+    cv2.imshow("Masked", white)
+    cv2.imshow("White1", white1)
+    cv2.imshow("White2", white2)
+    cv2.imshow("IMG", img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    plt.imshow(res, cmap = 'gray')
+    plt.title('Matching Result')
+    plt.xticks([])
+    plt.yticks([])
+    plt.subplot(122)
+    plt.imshow(img)
+    plt.title('Detected Point')
+    plt.xticks([])
+    plt.yticks([])
+    plt.suptitle(meth)
 
-            plt.subplot(121)
-            plt.imshow(res, cmap = 'gray')
-            plt.title('Matching Result')
-            plt.xticks([])
-            plt.yticks([])
-            plt.subplot(122)
-            plt.imshow(img, cmap = 'gray')
-            plt.title('Detected Point')
-            plt.xticks([])
-            plt.yticks([])
-            plt.suptitle(meth)
+    plt.show()
 
-            plt.show()
-
-            an = str(raw_input("Was the highlighted (if present) part of the image correct? (y/n)\n"))
-            timestr = time.strftime("%Y%m%d-%H%M%S")
-            cv2.imwrite(path+"log_" + layer_name + "_" + meth + "_" + an + "_" + timestr + ".png", img)
+    an = str(raw_input("Was the highlighted (if present) part of the image correct? (y/n)\n"))
+    timestr = time.strftime("%Y%m%d-%H%M%S")
+    cv2.imwrite(path+"log_" + layer_name + "_" + meth + "_" + an + "_" + timestr + ".png", img)
 
     if stats_file:
         print "\033[1;33mDone with all methods! Letting the next grid map through for inspection...\033[0m"
