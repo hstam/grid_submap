@@ -4,7 +4,9 @@ import cv2
 import time
 import rospy
 import rospkg
+import collections
 import numpy as np
+import math as mt
 from os import listdir
 from os.path import isfile, join
 from matplotlib import pyplot as plt
@@ -19,6 +21,7 @@ ready = False
 layers = []
 method = 0
 path = ""
+specific_files = []
 
 class Pattern:
     def __init__(self, filename, layer, specific="", combined=False, data=[]):
@@ -115,6 +118,22 @@ def FLANN(img1, img2):
     return kp1, kp2, matches
 
 def SURF(img1, img2):
+
+    #img2 = cv2.GaussianBlur(img2,(3,3),3)
+    
+    plt.subplot(121)
+    plt.imshow(img1)
+    plt.title('QueryImage')
+    plt.xticks([])
+    plt.yticks([])
+    plt.subplot(122)
+    plt.imshow(img2)
+    plt.title('TrainImage')
+    plt.xticks([])
+    plt.yticks([])
+
+    plt.show()
+
     # Initiate SURF detector
     surf = cv2.xfeatures2d.SURF_create(500, 10, 50, True, True)
 
@@ -125,13 +144,12 @@ def SURF(img1, img2):
     # Create BFMatcher and add cluster of training images. One for now.
     bf = cv2.BFMatcher(cv2.NORM_L1,crossCheck=False) # crossCheck not supported by BFMatcher
     clusters = np.array([des1])
-    bf.add(clusters)
+    bf.add(clusters)                                                                #add is used to add descriptor of multiple test images
 
     # Train: Does nothing for BruteForceMatcher though.
     bf.train()
 
-    # Match descriptors.
-    matches = bf.match(des2)
+    matches = bf.match(des2)                                                                                                                             
 
     return kp1, kp2, matches
 
@@ -167,23 +185,233 @@ def transformationsHomography(img1, img2, kp1, kp2, matches):
             img3 = cv2.drawMatches(img1,kp1,img2,kp2,good,None,**draw_params)
             plt.imshow(img3, 'gray'),plt.show()
         else:
-            print "Not enough points found for holography"
+            print "Not enough points found for homography"
 
     else:
         print "Not enough matches are found - %d/%d" % (len(good),MIN_MATCH_COUNT)
 
+def getMask(w,h,up,left):
+    mask = np.zeros((w,h),dtype = np.int)
+
+    if up:
+        if left: 
+            x0, y0 = 0, (h-2)
+            x1, y1 = (w-2), 0 
+            x, y = np.round(np.linspace(x0,x1,w-1)), np.round(np.linspace(y0,y1,w-1))
+            x, y = x.astype(np.int), y.astype(np.int)
+
+            for i in range(w-1):                
+                    mask[i][0:y[i]+1] = np.ones(y[i]+1,dtype = np.int)
+        else:
+            x0, y0 = 0, 1
+            x1, y1 = (w-2), (h-1) 
+            x, y = np.round(np.linspace(x0,x1,w-1)), np.round(np.linspace(y0,y1,w-1))
+            x, y = x.astype(np.int), y.astype(np.int)
+
+            for i in range(w-1):
+                    mask[i][y[i]:h] = np.ones(h-y[i],dtype = np.int)
+    else:
+        if left: 
+            x0, y0 = 1, 0
+            x1, y1 = (w-1), (h-2) 
+            x, y = np.round(np.linspace(x0,x1,w-1)), np.round(np.linspace(y0,y1,w-1))
+            x, y = x.astype(np.int), y.astype(np.int)
+            
+            for i in range(1,w):
+                mask[i][0:y[i-1]+1] = np.ones(y[i-1]+1,dtype = np.int)
+        else:
+            x0, y0 = 1, (h-1)
+            x1, y1 = (w-1), 1
+            x, y = np.round(np.linspace(x0,x1,w-1)), np.round(np.linspace(y0,y1,w-1))
+            x, y = x.astype(np.int), y.astype(np.int)
+            
+            for i in range(1,w):
+                mask[i][y[i-1]:h] = np.ones(h-y[i-1],dtype = np.int)
+
+    return mask
+
+
 def templateMatching(img, template, layer_name):
-    global stats_file, path, magic_thresholds, multiple
+    global stats_file, path, magic_thresholds, multiple, specific_files
     img2 = img.copy()
-    ts = template.shape[::-1]
-    w = ts[0]
-    h = ts[1]
+    plt.imshow(img, cmap = 'gray')
+    (w,h) = template.shape[:2]
+    (cx,cy) = (h/2,w/2)
+
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    plt.subplot(121)
+    plt.imshow(template)
+    plt.title('TemplateImage')
+    plt.xticks([])
+    plt.yticks([])
+    plt.subplot(122)
+    plt.imshow(img)
+    plt.title('Image')
+    plt.xticks([])
+    plt.yticks([])
+    plt.show()
+
+#**************************************************
 
     # All the 6 methods for comparison in a list
-    methods = ['cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR',
-    'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
+    methods = ['cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR', 'cv2.TM_CCORR_NORMED','cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
 
     for meth in methods:
+
+        img = img2.copy()
+        method = eval(meth)
+        threshold = magic_thresholds[methods.index(meth)]
+
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     
+        # loop over the rotation-angles of the template image
+        for theta in np.linspace(-30.0, 30.0, 30):
+
+            #rotate properly the image
+            M = cv2.getRotationMatrix2D((cx,cy),theta,1)
+            cos = np.abs(M[0, 0])
+            sin = np.abs(M[0, 1])  
+            new_h = int(h*cos+w*sin)
+            new_w = int(h*sin+w*cos)
+
+            M[0, 2] += new_h/2-cx               
+            M[1, 2] += new_w/2-cy
+
+            rotated = cv2.warpAffine(template,M,(new_h,new_w))
+
+            #create the mask required for the rotated template image
+            mask = np.ones((new_w,new_h), dtype = np.int)
+
+            s1 = h*sin
+            s2 = h*cos
+            if s1 == max(s1,s2):
+                s1 = int(mt.floor(s1))
+                s2 = int(mt.ceil(s2))
+            else:
+                s1 = int(mt.ceil(s1))
+                s2 = int(mt.floor(s2))
+
+            s3 = w*cos
+            s4 = w*sin
+            if s3 == max(s3,s4):
+                s3 = int(mt.floor(s3))
+                s4 = int(mt.ceil(s4))
+            else:
+                s3 = int(mt.ceil(s3))
+                s4 = int(mt.floor(s4))
+
+            if theta > 0:
+                mask[0:s1,0:s2] = getMask(s1,s2,False,False)
+                mask[0:s3,new_h-s4:new_h] = getMask(s3,s4,False,True)
+                mask[new_w-s3:new_w,0:s4] = getMask(s3,s4,True,False)
+                mask[new_w-s1:new_w,new_h-s2:new_h] = getMask(s1,s2,True,True)
+            else:
+                mask[0:s3,0:s4] = getMask(s3,s4,False,False)
+                mask[0:s1,new_h-s2:new_h] = getMask(s1,s2,False,True)
+                mask[new_w-s1:new_w,0:s2] = getMask(s1,s2,True,False)
+                mask[new_w-s3:new_w,new_h-s4:new_h] = getMask(s3,s4,True,True)
+
+            mask = np.ascontiguousarray(mask, dtype=np.uint8)
+
+            plt.subplot(121)
+
+            if method in [cv2.TM_SQDIFF, cv2.TM_CCORR_NORMED]:
+                plt.imshow(rotated)
+                res = cv2.matchTemplate(img, rotated, method, mask)
+            else:
+                inv_mask = 1-mask                                               #get the inverse binary mask
+                inpainted = cv2.inpaint(rotated,inv_mask,3,cv2.INPAINT_TELEA)
+                plt.imshow(inpainted)
+                res = cv2.matchTemplate(img, inpainted, method)
+
+
+            plt.title('TemplateImage')
+            plt.xticks([])
+            plt.yticks([])
+            plt.subplot(122)
+            plt.imshow(img)
+            plt.title('Image')
+            plt.xticks([])
+            plt.yticks([])
+            plt.show()
+
+#*****************************************************
+
+            # Apply template Matching
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+
+            # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
+            print "Method = " + meth
+            print "Threshold = " + str(threshold)
+            if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+                top_left = min_loc
+                print "Value = (<)" + str(min_val)
+            else:
+                top_left = max_loc
+                print "Value = (>) " + str(max_val)
+            bottom_right = (top_left[0] + h, top_left[1] + w)
+
+            if stats_file:
+                nothing = True
+
+                if ((meth == methods[4] and min_val < magic_thresholds[4]) 
+                    or (meth == methods[5] and min_val < magic_thresholds[5])
+                    or (meth == methods[0] and max_val > magic_thresholds[0])
+                    or (meth == methods[1] and max_val > magic_thresholds[1])
+                    or (meth == methods[2] and max_val > magic_thresholds[2])
+                    or (meth == methods[3] and max_val > magic_thresholds[3])):
+
+                    nothing = False
+                    if multiple:
+                        loc = np.where( res >= threshold)
+                        if len(np.shape(img)) < 3:
+                            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                            for pt in zip(*loc[::-1]):
+                                cv2.rectangle(img, pt, (pt[0] + h, pt[1] + w), (0,0,255), 2)
+                            res = np.transpose(res)
+                            img = np.transpose(img, (1, 0, 2))
+                        else:            
+                            for pt in zip(*loc[::-1]):
+                                cv2.rectangle(img, pt, (pt[0] + h, pt[1] + w), (0,0,255), 2)
+                    else:
+                        if len(np.shape(img)) < 3:
+                            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                            cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2) #yellow
+                            res = np.transpose(res)
+                            img = np.transpose(img, (1, 0, 2))
+                        else:
+                            cv2.rectangle(img, top_left, bottom_right, (255, 255, 0), 2)
+
+                if nothing and len(np.shape(img)) < 3:
+                    res = np.transpose(res)
+                    img = np.transpose(img)
+
+            
+
+        plt.subplot(121)
+        plt.imshow(res, cmap = 'gray')
+        plt.title('Matching Result')
+        plt.xticks([])
+        plt.yticks([])
+        plt.subplot(122)
+        plt.imshow(img, cmap = 'gray')
+        plt.title('Detected Point')
+        plt.xticks([])
+        plt.yticks([])
+        plt.suptitle(meth)
+
+        plt.show()
+
+        an = str(raw_input("Was the highlighted (if present) part of the image correct? (y/n)\n"))
+        timestr = time.strftime("%Y%m%d-%H%M%S")
+        if not specific_files:
+            cv2.imwrite(path+"/bag0/log_" + layer_name + "_" + meth + "_thres-" + str(threshold) + "_all_" + an + "_" + timestr + ".png", img)
+        else:
+            cv2.imwrite(path+"/bag0/log_" + layer_name + "_" + meth + "_thres-" + str(threshold) + "_part_" + an + "_" + timestr + ".png", img)     
+
+    for meth in methods:
+        i = 2*methods.index(meth)+1
         img = img2.copy()
         method = eval(meth)
         threshold = magic_thresholds[methods.index(meth)]
@@ -191,21 +419,22 @@ def templateMatching(img, template, layer_name):
         # Apply template Matching
         res = cv2.matchTemplate(img, template, method)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+        print "Mean value: "
+        print np.mean(res)
 
         # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
         print "Method = " + meth
         print "Threshold = " + str(threshold)
         if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
             top_left = min_loc
-            print "Value = (<)" + str(min_val)
+            #print "Value = (<)" + str(min_val)
         else:
             top_left = max_loc
-            print "Value = (>) " + str(max_val)
-        bottom_right = (top_left[0] + w, top_left[1] + h)
+            #print "Value = (>) " + str(max_val)
+        bottom_right = (top_left[0] + h, top_left[1] + w)
 
         if stats_file:
-            print "Check the images, decide if the selected area corresponds to the trained image, close the window and answer with 'y' or 'n'"
-
+            #print "Check the images, decide if the selected area corresponds to the trained image, close the window and answer with 'y' or 'n'"
             nothing = True
 
             if ((meth == methods[4] and min_val < magic_thresholds[4]) 
@@ -216,18 +445,17 @@ def templateMatching(img, template, layer_name):
                 or (meth == methods[3] and max_val > magic_thresholds[3])):
 
                 nothing = False
-
                 if multiple:
                     loc = np.where( res >= threshold)
                     if len(np.shape(img)) < 3:
                         img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
                         for pt in zip(*loc[::-1]):
-                            cv2.rectangle(img, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
+                            cv2.rectangle(img, pt, (pt[0] + h, pt[1] + w), (0,0,255), 2)
                         res = np.transpose(res)
                         img = np.transpose(img, (1, 0, 2))
                     else:
                         for pt in zip(*loc[::-1]):
-                            cv2.rectangle(img, pt, (pt[0] + w, pt[1] + h), (0,0,255), 2)
+                            cv2.rectangle(img, pt, (pt[0] + h, pt[1] + w), (0,0,255), 2)
                 else:
                     if len(np.shape(img)) < 3:
                         img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
@@ -242,23 +470,16 @@ def templateMatching(img, template, layer_name):
                 img = np.transpose(img)
 
 
-            plt.subplot(121)
+            plt.subplot(6,2,i)
             plt.imshow(res, cmap = 'gray')
-            plt.title('Matching Result')
             plt.xticks([])
             plt.yticks([])
-            plt.subplot(122)
+            plt.subplot(6,2,i+1)
             plt.imshow(img, cmap = 'gray')
-            plt.title('Detected Point')
             plt.xticks([])
             plt.yticks([])
-            plt.suptitle(meth)
-
-            plt.show()
-
-            an = str(raw_input("Was the highlighted (if present) part of the image correct? (y/n)\n"))
-            timestr = time.strftime("%Y%m%d-%H%M%S")
-            cv2.imwrite(path+"log_" + layer_name + "_" + meth + "_" + an + "_" + timestr + ".png", img)
+        
+    plt.show()
 
     if stats_file:
         print "\033[1;33mDone with all methods! Letting the next grid map through for inspection...\033[0m"
@@ -269,7 +490,8 @@ def midPoint(p1, p2):
     return ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
 
 def gridMapCallback(msg):
-    global ready, combined_layers, patterns, layers, combined_only
+    global ready, combined_layers, patterns, layers, combined_only, specific_files
+    
     if ready:
         ready = False
         if len(combined_layers) == 3:
@@ -294,7 +516,7 @@ def gridMapCallback(msg):
                     if method != 4:
                         transformationsHomography(comb_img, p.data, kp1, kp2, matches)
                     # TODO transformations based on returned values
-        if not combined_only:
+        if not combined_only:                                                                                           
             layer_imgs = []
             for l in layers:
                 layer_imgs.append(Pattern("", l, data = gridMapLayerToImage(msg, l)))
@@ -322,9 +544,11 @@ def gridMapCallback(msg):
                         # TODO transformations based on returned values
         ready = True
 
-def initPatterns(path, layers, specific_files, combined_layers):
+def initPatterns(path, layers, combined_layers):
+    global specific_files
     files = [f for f in listdir(path) if isfile(join(path, f))]
     patterns_oi = []
+
     for f in files:
         layers_ok = False
         specific_ok = len(specific_files) <= 0
@@ -354,7 +578,8 @@ def initPatterns(path, layers, specific_files, combined_layers):
                 values = line.split("#")
                 values = [gridCellToPixel(float(val)) for val in values]
                 v.append(values)
-            patterns_oi[p].data = np.reshape(v, (w,h))
+
+            patterns_oi[p].data = np.reshape(v, (h,w))
 
     if len(combined_layers) == 3:
         for p in patterns_oi:
@@ -378,7 +603,7 @@ def initPatterns(path, layers, specific_files, combined_layers):
     return patterns_oi
 
 def init():
-    global ready, patterns, layers, combined_layers, method, combined_only, stats_file, path, magic_thresholds, multiple
+    global ready, patterns, layers, combined_layers, method, combined_only, stats_file, path,magic_thresholds, multiple, specific_files
     rospy.init_node("grid_submap_detection")
 
     rospack = rospkg.RosPack()
@@ -393,7 +618,7 @@ def init():
     stats_file = rospy.get_param("~write_stats_file", False)
     multiple = rospy.get_param("~multiple", False)
 
-    multiple = True
+    #multiple = True
     stats_file = True
 
     #'cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR', 'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
@@ -411,8 +636,7 @@ def init():
         method = 4
 
     # Methods 1 and 2 are not providing the correct format for matches(?)
-
-    patterns = initPatterns(path, layers, specific_files, combined_layers)
+    patterns = initPatterns(path, layers, combined_layers)
     rospy.Subscriber(gridmap_topic, GridMap, gridMapCallback)
 
     ready = True
